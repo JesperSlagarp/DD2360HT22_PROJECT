@@ -9,6 +9,7 @@
 #include "Grid.h"
 #include "EMfield.h"
 #include "InterpDensSpecies.h"
+#include <cuda_fp16.h>
 
 struct particles {
     
@@ -47,14 +48,11 @@ struct particles {
     FPpart* x; FPpart*  y; FPpart* z; FPpart* u; FPpart* v; FPpart* w;
     /** q must have precision of interpolated quantities: typically double. Not used in mover */
     FPinterp* q;
-    
-    
-    
 };
 
 struct d_particles {
-    FPpart* x; FPpart*  y; FPpart* z;
-    FPpart* u; FPpart* v; FPpart* w;
+    half2* x; half2* y; half2* z;
+    half2* u; half2* v; half2* w;
 };
 
 /** allocate particle arrays */
