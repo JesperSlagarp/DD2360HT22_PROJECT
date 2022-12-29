@@ -29,12 +29,12 @@ struct EMfield {
 };
 
 struct d_EMfield {
-    half* Ex_flat;
-    half* Ey_flat;
-    half* Ez_flat;
-    half* Bxn_flat;
-    half* Byn_flat;
-    half* Bzn_flat;
+    FPfield* Ex_flat;
+    FPfield* Ey_flat;
+    FPfield* Ez_flat;
+    FPfield* Bxn_flat;
+    FPfield* Byn_flat;
+    FPfield* Bzn_flat;
 };
 
 /** allocate electric and magnetic field */

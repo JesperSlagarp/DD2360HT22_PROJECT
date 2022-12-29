@@ -51,7 +51,7 @@ v0 = 0.0 0.0 0.0 0.0
 # w0 = drift velocity   - Direction Z    */
 w0 = 0.0065 -0.0325 0.0 0.0 
 
-
+PERIODICX = false
 
 # Output for field 
 FieldOutputCycle=10

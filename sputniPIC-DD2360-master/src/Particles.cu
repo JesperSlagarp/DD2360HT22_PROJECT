@@ -194,7 +194,6 @@ __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qo
         //////////
         //////////
         ////////// BC
-                                    
         // X-DIRECTION: BC particles
         /*if (d_parts.x[i] > (half)grd.Lx){
             if (param.PERIODICX==true){ // PERIODIC
@@ -235,10 +234,15 @@ __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qo
         }*/
         if (__hlt(d_parts.x[i].x, (half)0)){
             if (param.PERIODICX==true){ // PERIODIC
+                if(i == 1) printf("(param.PERIODICX==true): x: %f, Lx: %f\n",(float)d_parts.x[i].x, (float)d_grd.Lx.x);
                 d_parts.x[i].x = __hadd(d_parts.x[i].x, d_grd.Lx.x);
+                if(i == 1) printf("(AFTER:::param.PERIODICX==true): x: %f, Lx: %f\n",(float)d_parts.x[i].x, (float)d_grd.Lx.x);
+                
             } else { // REFLECTING BC
+                if(i == 1) printf("(param.PERIODICX==false): x: %f\n", d_parts.x[i].x);
                 d_parts.u[i].x = __hneg(d_parts.u[i].x);
                 d_parts.x[i].x = __hneg(d_parts.x[i].x);
+                if(i == 1) printf("(AFTER:::param.PERIODICX==false): x: %f\n",(float)d_parts.x[i].x);
             }
         }
 
@@ -371,7 +375,11 @@ __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qo
 
         //if(i == 1) { printf("AFTER last mini loop\n");}
     }
-    /*if(i == 1) { printf("End of mover:\n x: %f, y: %f, z: %f, u: %f, v: %f, w: %f\n", __half2float(d_parts.x[i]), __half2float(d_parts.y[i]), __half2float(d_parts.z[i]), __half2float(d_parts.u[i]), __half2float(d_parts.v[i]), __half2float(d_parts.w[i]));}*/
+    if(i == 1) {
+        printf("End of mover:\n x: %f, y: %f, z: %f, u: %f, v: %f, w: %f\n",
+            __half2float(d_parts.x[i].x), __half2float(d_parts.y[i].x), __half2float(d_parts.z[i].x),
+            __half2float(d_parts.u[i].x), __half2float(d_parts.v[i].x), __half2float(d_parts.w[i].x));
+    }
     //if(i > 2040990) printf("%d\n", i);
     //seg fault at 2040991 + 1
     //2047999 + 1
@@ -381,7 +389,7 @@ __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qo
 int mover_PC_gpu(struct particles* part, struct EMfield* field, struct grid* grd, struct parameters* param) {
     // print species and subcycling
     std::cout << "***  MOVER with SUBCYCLYING "<< param->n_sub_cycles << " - species " << part->species_ID << " ***" << std::endl;
-    std::cout << "NOP: " << part->nop << "\n" << std::endl;
+    //std::cout << "NOP: " << part->nop << "\n" << std::endl;
 
     // Particle GPU allocation
 
@@ -427,28 +435,17 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field, struct grid* grd
 
     // Grid GPU Allocation
     d_grid d_grd;
-    half * d_cnodes[3];
+    FPfield * d_cnodes[3];
     for (int i = 0; i < 3; i++) {
-        cudaMalloc(&d_cnodes[i], grd->nxn*grd->nyn*grd->nzn*sizeof(half));
+        cudaMalloc(&d_cnodes[i], grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield));
     }
     d_grd.XN_flat = d_cnodes[0];
     d_grd.YN_flat = d_cnodes[1];
     d_grd.ZN_flat = d_cnodes[2];
 
-    half * temp_grd[3];
-    for(int i = 0; i < 3; i++) {
-        temp_grd[i] = (half *) malloc(grd->nxn*grd->nyn*grd->nzn*sizeof(half));
-    }
-    
-    for(int i = 0; i < grd->nxn*grd->nyn*grd->nzn; i++) {
-        temp_grd[0][i] = __float2half(grd->XN_flat[i]);
-        temp_grd[1][i] = __float2half(grd->YN_flat[i]);
-        temp_grd[2][i] = __float2half(grd->ZN_flat[i]);
-    }
-    
-    cudaMemcpy((d_grd.XN_flat), temp_grd[0], grd->nxn*grd->nyn*grd->nzn*sizeof(half), cudaMemcpyHostToDevice);
-    cudaMemcpy((d_grd.YN_flat), temp_grd[1], grd->nxn*grd->nyn*grd->nzn*sizeof(half), cudaMemcpyHostToDevice);
-    cudaMemcpy((d_grd.ZN_flat), temp_grd[2], grd->nxn*grd->nyn*grd->nzn*sizeof(half), cudaMemcpyHostToDevice);
+    cudaMemcpy((d_grd.XN_flat), grd->XN_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
+    cudaMemcpy((d_grd.YN_flat), grd->YN_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
+    cudaMemcpy((d_grd.ZN_flat), grd->ZN_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
     
     d_grd.xStart.x = __double2half(grd->xStart);
     d_grd.xStart.y = __double2half(grd->xStart);
@@ -479,9 +476,9 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field, struct grid* grd
     
     // Field GPU Allocation
     d_EMfield d_fld;
-    half * d_enodes[6];
+    FPfield * d_enodes[6];
     for(int i = 0; i < 6; i++) {
-        cudaMalloc(&d_enodes[i], grd->nxn*grd->nyn*grd->nzn*sizeof(half));
+        cudaMalloc(&d_enodes[i], grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield));
     }
 
     d_fld.Ex_flat = d_enodes[0];
@@ -491,26 +488,12 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field, struct grid* grd
     d_fld.Byn_flat = d_enodes[4];
     d_fld.Bzn_flat = d_enodes[5];
 
-    half * temp_field[6];
-    for(int i = 0; i < 6; i++) {
-        temp_field[i] = (half *)malloc(grd->nxn*grd->nyn*grd->nzn*sizeof(half));
-    }
-    for(int i = 0; i < grd->nxn*grd->nyn*grd->nzn; i++) {
-        temp_field[0][i] = __float2half(field->Ex_flat[i]);
-        temp_field[1][i] = __float2half(field->Ey_flat[i]);
-        temp_field[2][i] = __float2half(field->Ez_flat[i]);
-        temp_field[3][i] = __float2half(field->Bxn_flat[i]);
-        temp_field[4][i] = __float2half(field->Byn_flat[i]);
-        temp_field[5][i] = __float2half(field->Bzn_flat[i]);
-
-    }
-
-    cudaMemcpy((d_fld.Ex_flat), temp_field[0], grd->nxn*grd->nyn*grd->nzn*sizeof(half), cudaMemcpyHostToDevice);
-    cudaMemcpy((d_fld.Ey_flat), temp_field[1], grd->nxn*grd->nyn*grd->nzn*sizeof(half), cudaMemcpyHostToDevice);
-    cudaMemcpy((d_fld.Ez_flat), temp_field[2], grd->nxn*grd->nyn*grd->nzn*sizeof(half), cudaMemcpyHostToDevice);
-    cudaMemcpy((d_fld.Bxn_flat), temp_field[3], grd->nxn*grd->nyn*grd->nzn*sizeof(half), cudaMemcpyHostToDevice);
-    cudaMemcpy((d_fld.Byn_flat), temp_field[4], grd->nxn*grd->nyn*grd->nzn*sizeof(half), cudaMemcpyHostToDevice);
-    cudaMemcpy((d_fld.Bzn_flat), temp_field[5], grd->nxn*grd->nyn*grd->nzn*sizeof(half), cudaMemcpyHostToDevice);
+    cudaMemcpy((d_fld.Ex_flat), field->Ex_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
+    cudaMemcpy((d_fld.Ey_flat), field->Ey_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
+    cudaMemcpy((d_fld.Ez_flat), field->Ez_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
+    cudaMemcpy((d_fld.Bxn_flat), field->Bxn_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
+    cudaMemcpy((d_fld.Byn_flat), field->Byn_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
+    cudaMemcpy((d_fld.Bzn_flat), field->Bzn_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
     
     double startTime = cpuSecond();
     mover_kernel<<<((part->nop / 2 + TPB - 1) + 1) / TPB, TPB>>>(part->n_sub_cycles, part->NiterMover, part->nop, __float2half(part->qom), *grd, *param, d_parts, d_fld, d_grd);
@@ -527,20 +510,22 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field, struct grid* grd
     cudaMemcpy(temp_parts[5], d_parts.w, part->npmax/2 * sizeof(half2) + 1, cudaMemcpyDeviceToHost);
 
 
-    for(int i = 0; i < part->npmax; i += 2) {
-        part->x[i] = (FPpart)__half2float(temp_parts[0][i].x);
-        part->x[i + 1] = (FPpart)__half2float(temp_parts[0][i].y);
-        part->y[i] = (FPpart)__half2float(temp_parts[1][i].x);
-        part->y[i + 1] = (FPpart)__half2float(temp_parts[1][i].y);
-        part->z[i] = (FPpart)__half2float(temp_parts[2][i].x);
-        part->z[i + 1] = (FPpart)__half2float(temp_parts[2][i].y);
-        part->u[i] = (FPpart)__half2float(temp_parts[3][i].x);
-        part->u[i + 1] = (FPpart)__half2float(temp_parts[3][i].y);
-        part->v[i] = (FPpart)__half2float(temp_parts[4][i].x);
-        part->v[i + 1] = (FPpart)__half2float(temp_parts[4][i].y);
-        part->w[i] = (FPpart)__half2float(temp_parts[5][i].x);
-        part->w[i + 1] = (FPpart)__half2float(temp_parts[5][i].y);
+    for(int i = 0; i < part->nop; i+=2) {
+        part->x[i] = (FPpart)__half2float(temp_parts[0][i/2].x);
+        part->x[i + 1] = (FPpart)__half2float(temp_parts[0][i/2].y);
+        part->y[i] = (FPpart)__half2float(temp_parts[1][i/2].x);
+        part->y[i + 1] = (FPpart)__half2float(temp_parts[1][i/2].y);
+        part->z[i] = (FPpart)__half2float(temp_parts[2][i/2].x);
+        part->z[i + 1] = (FPpart)__half2float(temp_parts[2][i/2].y);
+        part->u[i] = (FPpart)__half2float(temp_parts[3][i/2].x);
+        part->u[i + 1] = (FPpart)__half2float(temp_parts[3][i/2].y);
+        part->v[i] = (FPpart)__half2float(temp_parts[4][i/2].x);
+        part->v[i + 1] = (FPpart)__half2float(temp_parts[4][i/2].y);
+        part->w[i] = (FPpart)__half2float(temp_parts[5][i/2].x);
+        part->w[i + 1] = (FPpart)__half2float(temp_parts[5][i/2].y);
     }
+
+    //std::cout << "x: " << part->x[0] << std::endl;
 
     cudaFree(d_parts.x);
     cudaFree(d_parts.y);

@@ -61,9 +61,9 @@ struct grid {
 };
 
 struct d_grid {
-    half * XN_flat;
-    half * YN_flat;
-    half * ZN_flat;
+    FPfield * XN_flat;
+    FPfield * YN_flat;
+    FPfield * ZN_flat;
     half2 xStart;
     half2 xEnd;
     half2 yStart;
