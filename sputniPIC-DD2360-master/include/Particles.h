@@ -9,6 +9,7 @@
 #include "Grid.h"
 #include "EMfield.h"
 #include "InterpDensSpecies.h"
+#include <vector>
 #include <cuda_fp16.h>
 
 struct particles {
@@ -62,11 +63,15 @@ void particle_allocate(struct parameters*, struct particles*, int);
 void particle_deallocate(struct particles*);
 
 /** particle mover */
-int mover_PC(struct particles*, struct EMfield*, struct grid*, struct parameters*);
+int mover_PC_gpu(struct particles* part, struct d_particles d_part, struct d_EMfield d_fld, struct grid* grd, struct d_grid d_grd, struct parameters* param);
 
 /** Interpolation Particle --> Grid: This is for species */
 void interpP2G(struct particles*, struct interpDensSpecies*, struct grid*);
 
-int mover_PC_gpu(struct particles*, struct EMfield*, struct grid*, struct parameters*);
-
+void convert_to_fp16(struct particles* parts, struct d_particles *d_parts, int num,
+                    struct grid* grd, struct d_grid* d_grd,
+                    struct EMfield* field, struct d_EMfield* d_fld, half2** temp_parts);
+void convert_to_float(struct particles* parts, struct d_particles *d_parts, int num,
+                    struct grid* grd, struct d_grid* d_grd,
+                    struct EMfield* field, struct d_EMfield* d_fld, half2** temp_parts);
 #endif

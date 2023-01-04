@@ -80,6 +80,7 @@ int main(int argc, char **argv){
     // **********************************************************//
     // **** Start the Simulation!  Cycle index start from 1  *** //
     // **********************************************************//
+    //convert2fp16;
     for (int cycle = param.first_cycle_n; cycle < (param.first_cycle_n + param.ncycles); cycle++) {
         
         std::cout << std::endl;
@@ -94,8 +95,20 @@ int main(int argc, char **argv){
         
         // implicit mover
         iMover = cpuSecond(); // start timer for mover
-        for (int is=0; is < param.ns; is++)
-            mover_PC_gpu(&part[is],&field,&grd,&param);
+        struct d_particles d_parts[param.ns];
+        d_grid d_grd;
+        d_EMfield d_fld;
+
+        half2 * temp_parts[6];
+        for(int i = 0; i < 6; i++) {
+            temp_parts[i] = (half2 *) malloc(part->npmax/2 * sizeof(half2) + 1);
+        }
+        
+        for (int is=0; is < param.ns; is++) {
+            convert_to_fp16(&part[is], &d_parts[is], 1, &grd, &d_grd, &field, &d_fld, temp_parts);
+            mover_PC_gpu(&part[is], d_parts[is], d_fld, &grd, d_grd, &param);
+            convert_to_float(&part[is], &d_parts[is], 1, &grd, &d_grd, &field, &d_fld, temp_parts);
+        }
         eMover += (cpuSecond() - iMover); // stop timer for mover
         
         
