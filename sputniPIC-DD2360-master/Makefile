@@ -26,7 +26,10 @@ TARGET=sputniPIC.out
 
 all: dir $(BIN)/$(TARGET) float
 
-dir: ${BIN}
+dir: ${BIN} data
+
+data:
+	mkdir -p data
 
 ${BIN}:
 	mkdir -p $(BIN)
