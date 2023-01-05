@@ -91,11 +91,33 @@ int main(int argc, char **argv){
         setZeroDensities(&idn,ids,&grd,param.ns);
         
         
+
+        // Grid GPU Allocation
+        d_grid d_grd;
+        grid_to_fp16(&grd, &d_grd);
         
+        // Field GPU Allocation
+        d_EMfield d_fld;
+        
+        // Particle GPU Allocation
+        struct d_particles d_parts[param.ns]; 
+        
+        field_to_fp16(&grd, &field, &d_fld);
+        for (int is=0; is < param.ns; is++) {
+            parts_to_fp16(&part[is], &d_parts[is]);
+        }
+
         // implicit mover
         iMover = cpuSecond(); // start timer for mover
-        for (int is=0; is < param.ns; is++)
-            mover_PC_gpu(&part[is],&field,&grd,&param);
+        for (int is=0; is < param.ns; is++) {
+            
+            mover_PC_gpu(&part[is], &field, &grd, &param, &d_parts[is], &d_grd, &d_fld);
+        }
+        for (int is=0; is < param.ns; is++) {
+            parts_to_float(&part[is], &d_parts[is]);
+        }
+        free_d_grid(&d_grd);
+        free_d_field(&d_fld);
         eMover += (cpuSecond() - iMover); // stop timer for mover
         
         
