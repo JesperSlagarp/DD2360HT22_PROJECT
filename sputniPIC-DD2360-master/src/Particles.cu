@@ -32,7 +32,7 @@ __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qo
     // intermediate particle position and velocity
     half2 xptilde, yptilde, zptilde, uptilde, vptilde, wptilde;
 
-    if(i == 1) { printf("Before first cycle:\n x: %f, y: %f, z: %f, u: %f, v: %f, w: %f\n", __half2float(d_parts.x[i].x), __half2float(d_parts.y[i].x), __half2float(d_parts.z[i].x), __half2float(d_parts.u[i].x), __half2float(d_parts.v[i].x), __half2float(d_parts.w[i].x));}
+    //if(i == 1) { printf("Before first cycle:\n x: %f, y: %f, z: %f, u: %f, v: %f, w: %f\n", __half2float(d_parts.x[i].x), __half2float(d_parts.y[i].x), __half2float(d_parts.z[i].x), __half2float(d_parts.u[i].x), __half2float(d_parts.v[i].x), __half2float(d_parts.w[i].x));}
     
     // calculate the average velocity iteratively
     for(int i_sub = 0; i_sub < n_sub_cycles; i_sub++) {
@@ -152,15 +152,15 @@ __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qo
 
         if (__hlt(d_parts.x[i].x, (half)0)){
             if (param.PERIODICX==true){ // PERIODIC
-                if(i == 1) printf("(param.PERIODICX==true): x: %f, Lx: %f\n",(float)d_parts.x[i].x, (float)d_grd.Lx.x);
+                //if(i == 1) printf("(param.PERIODICX==true): x: %f, Lx: %f\n",(float)d_parts.x[i].x, (float)d_grd.Lx.x);
                 d_parts.x[i].x = __hadd(d_parts.x[i].x, d_grd.Lx.x);
-                if(i == 1) printf("(AFTER:::param.PERIODICX==true): x: %f, Lx: %f\n",(float)d_parts.x[i].x, (float)d_grd.Lx.x);
+                //if(i == 1) printf("(AFTER:::param.PERIODICX==true): x: %f, Lx: %f\n",(float)d_parts.x[i].x, (float)d_grd.Lx.x);
                 
             } else { // REFLECTING BC
-                if(i == 1) printf("(param.PERIODICX==false): x: %f\n", d_parts.x[i].x);
+                //if(i == 1) printf("(param.PERIODICX==false): x: %f\n", d_parts.x[i].x);
                 d_parts.u[i].x = __hneg(d_parts.u[i].x);
                 d_parts.x[i].x = __hneg(d_parts.x[i].x);
-                if(i == 1) printf("(AFTER:::param.PERIODICX==false): x: %f\n",(float)d_parts.x[i].x);
+                //if(i == 1) printf("(AFTER:::param.PERIODICX==false): x: %f\n",(float)d_parts.x[i].x);
             }
         }
 
@@ -247,18 +247,20 @@ __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qo
             }
         }
     }
+    /*
     if(i == 1) {
         printf("End of mover:\n x: %f, y: %f, z: %f, u: %f, v: %f, w: %f\n",
             __half2float(d_parts.x[i].x), __half2float(d_parts.y[i].x), __half2float(d_parts.z[i].x),
             __half2float(d_parts.u[i].x), __half2float(d_parts.v[i].x), __half2float(d_parts.w[i].x));
     }
+    */
 }
 
 
 int mover_PC_gpu(struct particles* part, struct EMfield* field,
                  struct grid* grd, struct parameters* param,
                  struct d_particles* d_parts, struct d_grid *d_grd,
-                 struct d_EMfield * d_fld) {
+                 struct d_EMfield * d_fld, double& kernelTotTime) {
     // print species and subcycling
     std::cout << "***  MOVER with SUBCYCLYING "<< param->n_sub_cycles << " - species " << part->species_ID << " ***" << std::endl;
     //std::cout << "NOP: " << part->nop << "\n" << std::endl;
@@ -269,8 +271,9 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field,
     //std::cout << "Block: " << Db << " Group: " << Dg << "\n" << std::endl;
     mover_kernel<<<Dg, Db>>>(part->n_sub_cycles, part->NiterMover, part->nop, __float2half(part->qom), *grd, *param, *d_parts, *d_fld, *d_grd);
     double endTime = cpuSecond() - startTime;
+    kernelTotTime += endTime;
     //I FEAR NO MAN, BUT THAT THING, SEGMENTATION FAULT(core dumped), IT SCARES ME. 
-    std::cout << "End time: " << endTime << "\n\n" << std::endl;
+    //std::cout << "End time: " << endTime << "\n\n" << std::endl;
     cudaDeviceSynchronize();
 
     return(0); // exit succcesfully
@@ -759,7 +762,7 @@ void parts_to_fp16(struct particles* parts, struct d_particles *d_parts) {
     d_parts->v = d_prt[4];
     d_parts->w = d_prt[5];
 
-    for(int i = 0; i < parts->npmax; i += 2) {
+        for(int i = 0; i < parts->npmax; i += 2) {
         d_parts->temp_parts[0][i/2].x = __float2half(parts->x[i]);
         d_parts->temp_parts[0][i/2].y = __float2half(parts->x[i + 1]);
         d_parts->temp_parts[1][i/2].x = __float2half(parts->y[i]);
