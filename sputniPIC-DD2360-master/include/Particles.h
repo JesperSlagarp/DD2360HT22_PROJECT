@@ -50,11 +50,19 @@ struct particles {
     FPinterp* q;
 };
 
+
+#ifdef FLOAT
+struct d_particles {
+    float* x; float* y; float* z;
+    float* u; float* v; float* w;
+};
+#else
 struct d_particles {
     half2* x; half2* y; half2* z;
     half2* u; half2* v; half2* w;
     float * temp_parts[6];
 };
+#endif
 
 /** allocate particle arrays */
 void particle_allocate(struct parameters*, struct particles*, int);

@@ -6,6 +6,165 @@
 #include <cuda_fp16.h>
 #define TPB 128
 
+#ifdef FLOAT
+__global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, FPpart qom, struct grid grd, struct parameters param,
+                  struct d_particles d_parts, struct d_EMfield d_fld, struct d_grid d_grd)
+{
+
+    int i = blockIdx.x*blockDim.x + threadIdx.x;
+    if(i >= nop) return;
+
+    // auxiliary variables
+    FPpart dt_sub_cycling = (FPpart) param.dt/((double) n_sub_cycles);
+    FPpart dto2 = .5*dt_sub_cycling, qomdt2 = qom*dto2/param.c;
+    FPpart omdtsq, denom, ut, vt, wt, udotb;
+
+    // local (to the particle) electric and magnetic field
+    FPfield Exl=0.0, Eyl=0.0, Ezl=0.0, Bxl=0.0, Byl=0.0, Bzl=0.0;
+
+    // interpolation densities
+    int ix,iy,iz;
+    FPfield weight[2][2][2];
+    FPfield xi[2], eta[2], zeta[2];
+
+    // intermediate particle position and velocity
+    FPpart xptilde, yptilde, zptilde, uptilde, vptilde, wptilde;
+
+    //if(i == 1) { printf("Before first cycle:\n x: %f, y: %f, z: %f, u: %f, v: %f, w: %f\n", d_parts.x[i], d_parts.y[i], d_parts.z[i], d_parts.u[i], d_parts.v[i], d_parts.w[i]);}
+
+    // calculate the average velocity iteratively
+    for(int i_sub = 0; i_sub < n_sub_cycles; i_sub++) {
+        xptilde = d_parts.x[i];
+        yptilde = d_parts.y[i];
+        zptilde = d_parts.z[i];
+        for(int innter=0; innter < NiterMover; innter++){
+            // interpolation G-->P
+            ix = 2 +  int((d_parts.x[i] - grd.xStart)*grd.invdx);
+            iy = 2 +  int((d_parts.y[i] - grd.yStart)*grd.invdy);
+            iz = 2 +  int((d_parts.z[i] - grd.zStart)*grd.invdz);
+
+            // calculate weights
+            xi[0]   = d_parts.x[i] - d_grd.XN_flat[get_idx(ix-1, iy, iz, grd.nyn, grd.nzn)];
+            eta[0]  = d_parts.y[i] - d_grd.YN_flat[get_idx(ix, iy-1, iz, grd.nyn, grd.nzn)];
+            zeta[0] = d_parts.z[i] - d_grd.ZN_flat[get_idx(ix, iy, iz-1, grd.nyn, grd.nzn)];
+
+            xi[1]   = d_grd.XN_flat[get_idx(ix, iy, iz, grd.nyn, grd.nzn)] - d_parts.x[i];
+            eta[1]  = d_grd.YN_flat[get_idx(ix, iy, iz, grd.nyn, grd.nzn)] - d_parts.y[i];
+            zeta[1] = d_grd.ZN_flat[get_idx(ix, iy, iz, grd.nyn, grd.nzn)] - d_parts.z[i];
+
+            for (int ii = 0; ii < 2; ii++)
+                for (int jj = 0; jj < 2; jj++)
+                    for (int kk = 0; kk < 2; kk++)
+                        weight[ii][jj][kk] = xi[ii] * eta[jj] * zeta[kk] * grd.invVOL;
+
+            // set to zero local electric and magnetic field
+            Exl=0.0, Eyl = 0.0, Ezl = 0.0, Bxl = 0.0, Byl = 0.0, Bzl = 0.0;
+
+            for (int ii=0; ii < 2; ii++)
+                for (int jj=0; jj < 2; jj++)
+                    for(int kk=0; kk < 2; kk++){
+                        Exl += weight[ii][jj][kk]*d_fld.Ex_flat[get_idx(ix-ii, iy-jj, iz-kk, grd.nyn, grd.nzn)];
+                        Eyl += weight[ii][jj][kk]*d_fld.Ey_flat[get_idx(ix-ii, iy-jj, iz-kk, grd.nyn, grd.nzn)];
+                        Ezl += weight[ii][jj][kk]*d_fld.Ez_flat[get_idx(ix-ii, iy-jj, iz-kk, grd.nyn, grd.nzn)];
+                        Bxl += weight[ii][jj][kk]*d_fld.Bxn_flat[get_idx(ix-ii, iy-jj, iz-kk, grd.nyn, grd.nzn)];
+                        Byl += weight[ii][jj][kk]*d_fld.Byn_flat[get_idx(ix-ii, iy-jj, iz-kk, grd.nyn, grd.nzn)];
+                        Bzl += weight[ii][jj][kk]*d_fld.Bzn_flat[get_idx(ix-ii, iy-jj, iz-kk, grd.nyn, grd.nzn)];
+                    }
+
+            // end interpolation
+            omdtsq = qomdt2*qomdt2*(Bxl*Bxl+Byl*Byl+Bzl*Bzl);
+            denom = 1.0/(1.0 + omdtsq);
+
+            // solve the position equation
+            ut= d_parts.u[i] + qomdt2*Exl;
+            vt= d_parts.v[i] + qomdt2*Eyl;
+            wt= d_parts.w[i] + qomdt2*Ezl;
+            udotb = ut*Bxl + vt*Byl + wt*Bzl;
+            // solve the velocity equation
+            uptilde = (ut+qomdt2*(vt*Bzl -wt*Byl + qomdt2*udotb*Bxl))*denom;
+            vptilde = (vt+qomdt2*(wt*Bxl -ut*Bzl + qomdt2*udotb*Byl))*denom;
+            wptilde = (wt+qomdt2*(ut*Byl -vt*Bxl + qomdt2*udotb*Bzl))*denom;
+            // update position
+            d_parts.x[i] = xptilde + uptilde*dto2;
+            d_parts.y[i] = yptilde + vptilde*dto2;
+            d_parts.z[i] = zptilde + wptilde*dto2;
+
+
+        } // end of iteration
+        // update the final position and velocity
+        d_parts.u[i]= 2.0*uptilde - d_parts.u[i];
+        d_parts.v[i]= 2.0*vptilde - d_parts.v[i];
+        d_parts.w[i]= 2.0*wptilde - d_parts.w[i];
+        d_parts.x[i] = xptilde + uptilde*dt_sub_cycling;
+        d_parts.y[i] = yptilde + vptilde*dt_sub_cycling;
+        d_parts.z[i] = zptilde + wptilde*dt_sub_cycling;
+
+        //////////
+        //////////
+        ////////// BC
+
+        // X-DIRECTION: BC particles
+        if (d_parts.x[i] > grd.Lx){
+            if (param.PERIODICX==true){ // PERIODIC
+                d_parts.x[i] = d_parts.x[i] - grd.Lx;
+            } else { // REFLECTING BC
+                d_parts.u[i] = -d_parts.u[i];
+                d_parts.x[i] = 2*grd.Lx - d_parts.x[i];
+            }
+        }
+
+        if (d_parts.x[i] < 0){
+            if (param.PERIODICX==true){ // PERIODIC
+                d_parts.x[i] = d_parts.x[i] + grd.Lx;
+            } else { // REFLECTING BC
+                d_parts.u[i] = -d_parts.u[i];
+                d_parts.x[i] = -d_parts.x[i];
+            }
+        }
+
+        // Y-DIRECTION: BC particles
+        if (d_parts.y[i] > grd.Ly){
+            if (param.PERIODICY==true){ // PERIODIC
+                d_parts.y[i] = d_parts.y[i] - grd.Ly;
+            } else { // REFLECTING BC
+                d_parts.v[i] = -d_parts.v[i];
+                d_parts.y[i] = 2*grd.Ly - d_parts.y[i];
+            }
+        }
+
+        if (d_parts.y[i] < 0){
+            if (param.PERIODICY==true){ // PERIODIC
+                d_parts.y[i] = d_parts.y[i] + grd.Ly;
+            } else { // REFLECTING BC
+                d_parts.v[i] = -d_parts.v[i];
+                d_parts.y[i] = -d_parts.y[i];
+            }
+        }
+
+        // Z-DIRECTION: BC particles
+        if (d_parts.z[i] > grd.Lz){
+            if (param.PERIODICZ==true){ // PERIODIC
+                d_parts.z[i] = d_parts.z[i] - grd.Lz;
+            } else { // REFLECTING BC
+                d_parts.w[i] = -d_parts.w[i];
+                d_parts.z[i] = 2*grd.Lz - d_parts.z[i];
+            }
+        }
+
+        if (d_parts.z[i] < 0){
+            if (param.PERIODICZ==true){ // PERIODIC
+                d_parts.z[i] = d_parts.z[i] + grd.Lz;
+            } else { // REFLECTING BC
+                d_parts.w[i] = -d_parts.w[i];
+                d_parts.z[i] = -d_parts.z[i];
+            }
+        }
+    }
+    //if(i == 1) { printf("End of mover:\n x: %f, y: %f, z: %f, u: %f, v: %f, w: %f\n", d_parts.x[i], d_parts.y[i], d_parts.z[i], d_parts.u[i], d_parts.v[i], d_parts.w[i]);}
+}
+
+#else
+
 __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qom, struct grid grd, struct parameters param, 
                 struct d_particles d_parts, struct d_EMfield d_fld, struct d_grid d_grd) {
 
@@ -255,7 +414,7 @@ __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qo
     }
     */
 }
-
+#endif //FLOAT
 
 int mover_PC_gpu(struct particles* part, struct EMfield* field,
                  struct grid* grd, struct parameters* param,
@@ -267,9 +426,14 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field,
 
     double startTime = cpuSecond();
     int Db = TPB;
+#ifdef FLOAT
+    int Dg = (part->nop + TPB - 1) / TPB;
+    mover_kernel<<<Dg, Db>>>(part->n_sub_cycles, part->NiterMover, part->nop, part->qom, *grd, *param, *d_parts, *d_fld, *d_grd);
+#else
     int Dg = (part->nop / 2 + TPB - 1) / TPB;
-    // std::cout << "Number of particles: " << part->nop << std::endl;
     mover_kernel<<<Dg, Db>>>(part->n_sub_cycles, part->NiterMover, part->nop, __float2half(part->qom), *grd, *param, *d_parts, *d_fld, *d_grd);
+#endif
+    // std::cout << "Number of particles: " << part->nop << std::endl;
     double endTime = cpuSecond() - startTime;
     kernelTotTime += endTime;
     //I FEAR NO MAN, BUT THAT THING, SEGMENTATION FAULT(core dumped), IT SCARES ME. 
@@ -746,6 +910,29 @@ void free_d_field(struct d_EMfield *d_fld) {
     cudaFree(d_fld->Bzn_flat);
 }
 
+#ifdef FLOAT
+void parts_to_fp16(struct particles* parts, struct d_particles *d_parts) {
+
+    float *d_prt[6];
+    for(int i = 0; i < 6; i++) {
+        cudaMalloc(&d_prt[i], parts->npmax * sizeof(float));
+    }
+
+    d_parts->x = d_prt[0];
+    d_parts->y = d_prt[1];
+    d_parts->z = d_prt[2];
+    d_parts->u = d_prt[3];
+    d_parts->v = d_prt[4];
+    d_parts->w = d_prt[5];
+
+    cudaMemcpy(d_parts->x, parts->x, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->y, parts->y, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->z, parts->z, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->u, parts->u, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->v, parts->v, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->w, parts->w, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+}
+#else
 __global__ void parts_to_fp16_kernel(struct d_particles d_parts, int npmax) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i >= npmax / 2)
@@ -793,7 +980,25 @@ void parts_to_fp16(struct particles* parts, struct d_particles *d_parts) {
     int Dg = (parts->npmax / 2 + TPB - 1) / TPB;
     parts_to_fp16_kernel<<<Dg,Db>>>(*d_parts, parts->npmax);
 }
+#endif //FLOAT
 
+#ifdef FLOAT
+void parts_to_float(struct particles* parts, struct d_particles *d_parts) {
+    cudaMemcpy(parts->x, d_parts->x, parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->y, d_parts->y, parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->z, d_parts->z, parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->u, d_parts->u, parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->v, d_parts->v, parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->w, d_parts->w, parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+
+    cudaFree(d_parts->x);
+    cudaFree(d_parts->y);
+    cudaFree(d_parts->z);
+    cudaFree(d_parts->u);
+    cudaFree(d_parts->v);
+    cudaFree(d_parts->w);
+}
+#else
 __global__ void parts_to_float_kernel(struct d_particles d_parts, int npmax) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i >= npmax / 2)
@@ -835,3 +1040,4 @@ void parts_to_float(struct particles* parts, struct d_particles *d_parts) {
         cudaFree(d_parts->temp_parts[i]);
     }
 }
+#endif //FLOAT
