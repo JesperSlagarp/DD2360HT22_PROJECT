@@ -394,6 +394,12 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field, struct grid* grd
     // Particle GPU allocation
 
     d_particles d_parts;
+    half2 * temp_parts[6];
+    for(int i = 0; i < 6; i++) {
+        temp_parts[i] = (half2 *) malloc(part->npmax/2 * sizeof(half2) + 1);
+    }
+
+    parts_to_fp16(part, &d_parts, grd, field, temp_parts);
     half2 * d_prt[6];
     for(int i = 0; i < 6; i++) {
         cudaMalloc(&d_prt[i], part->npmax/2 * sizeof(half2) + 1);
@@ -407,10 +413,6 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field, struct grid* grd
     d_parts.w = d_prt[5];
 
 
-    half2 * temp_parts[6];
-    for(int i = 0; i < 6; i++) {
-        temp_parts[i] = (half2 *) malloc(part->npmax/2 * sizeof(half2) + 1);
-    }
     for(int i = 0; i < part->npmax; i += 2) {
         temp_parts[0][i/2].x = __float2half(part->x[i]);
         temp_parts[0][i/2].y = __float2half(part->x[i + 1]);
@@ -496,7 +498,10 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field, struct grid* grd
     cudaMemcpy((d_fld.Bzn_flat), field->Bzn_flat, grd->nxn*grd->nyn*grd->nzn*sizeof(FPfield), cudaMemcpyHostToDevice);
     
     double startTime = cpuSecond();
-    mover_kernel<<<((part->nop / 2 + TPB - 1) + 1) / TPB, TPB>>>(part->n_sub_cycles, part->NiterMover, part->nop, __float2half(part->qom), *grd, *param, d_parts, d_fld, d_grd);
+    int Db = TPB;
+    int Dg = (part->nop / 2 + TPB - 1) / TPB;
+    std::cout << "Block: " << Db << " Group: " << Dg << "\n" << std::endl;
+    mover_kernel<<<Dg, Db>>>(part->n_sub_cycles, part->NiterMover, part->nop, __float2half(part->qom), *grd, *param, d_parts, d_fld, d_grd);
     double endTime = cpuSecond() -startTime;
     //I FEAR NO MAN, BUT THAT THING, SEGMENTATION FUALT(core dumped), IT SCARES ME. 
     std::cout << "End time: " << endTime << "\n\n" << std::endl;
