@@ -268,7 +268,7 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field,
     double startTime = cpuSecond();
     int Db = TPB;
     int Dg = (part->nop / 2 + TPB - 1) / TPB;
-    //std::cout << "Block: " << Db << " Group: " << Dg << "\n" << std::endl;
+    // std::cout << "Number of particles: " << part->nop << std::endl;
     mover_kernel<<<Dg, Db>>>(part->n_sub_cycles, part->NiterMover, part->nop, __float2half(part->qom), *grd, *param, *d_parts, *d_fld, *d_grd);
     double endTime = cpuSecond() - startTime;
     kernelTotTime += endTime;
@@ -349,7 +349,7 @@ void particle_deallocate(struct particles* part)
 }
 
 /** particle mover */
-int mover_PC(struct particles* part, struct EMfield* field, struct grid* grd, struct parameters* param)
+int mover_PC_cpu(struct particles* part, struct EMfield* field, struct grid* grd, struct parameters* param)
 {
     // print species and subcycling
     std::cout << "***  MOVER with SUBCYCLYING "<< param->n_sub_cycles << " - species " << part->species_ID << " ***" << std::endl;
@@ -746,15 +746,35 @@ void free_d_field(struct d_EMfield *d_fld) {
     cudaFree(d_fld->Bzn_flat);
 }
 
+__global__ void parts_to_fp16_kernel(struct d_particles d_parts, int npmax) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i >= npmax / 2)
+        return;
+    // printf("Test2 %f\n", __half2float(d_parts.x[0].x));
+    d_parts.x[0].x = __float2half(d_parts.temp_parts[0][2 * i]);
+    d_parts.x[i].y = __float2half(d_parts.temp_parts[0][2 * i + 1]);
+    d_parts.y[i].x = __float2half(d_parts.temp_parts[1][2 * i]);
+    d_parts.y[i].y = __float2half(d_parts.temp_parts[1][2 * i + 1]);
+    d_parts.z[i].x = __float2half(d_parts.temp_parts[2][2 * i]);
+    d_parts.z[i].y = __float2half(d_parts.temp_parts[2][2 * i + 1]);
+    d_parts.u[i].x = __float2half(d_parts.temp_parts[3][2 * i]);
+    d_parts.u[i].y = __float2half(d_parts.temp_parts[3][2 * i + 1]);
+    d_parts.v[i].x = __float2half(d_parts.temp_parts[4][2 * i]);
+    d_parts.v[i].y = __float2half(d_parts.temp_parts[4][2 * i + 1]);
+    d_parts.w[i].x = __float2half(d_parts.temp_parts[5][2 * i]);
+    d_parts.w[i].y = __float2half(d_parts.temp_parts[5][2 * i + 1]);
+}
+
 void parts_to_fp16(struct particles* parts, struct d_particles *d_parts) {
 
-    half2 * d_prt[6];
+    half2 *d_prt[6];
     for(int i = 0; i < 6; i++) {
-        d_parts->temp_parts[i] = (half2 *) malloc(parts->npmax/2 * sizeof(half2) + 1);
+        cudaMalloc(&d_prt[i], parts->npmax/2 * sizeof(half2));
     }
     for(int i = 0; i < 6; i++) {
-        cudaMalloc(&d_prt[i], parts->npmax/2 * sizeof(half2) + 1);
+        cudaMalloc(&(d_parts->temp_parts[i]), parts->npmax * sizeof(float));
     }
+
     d_parts->x = d_prt[0];
     d_parts->y = d_prt[1];
     d_parts->z = d_prt[2];
@@ -762,52 +782,47 @@ void parts_to_fp16(struct particles* parts, struct d_particles *d_parts) {
     d_parts->v = d_prt[4];
     d_parts->w = d_prt[5];
 
-        for(int i = 0; i < parts->npmax; i += 2) {
-        d_parts->temp_parts[0][i/2].x = __float2half(parts->x[i]);
-        d_parts->temp_parts[0][i/2].y = __float2half(parts->x[i + 1]);
-        d_parts->temp_parts[1][i/2].x = __float2half(parts->y[i]);
-        d_parts->temp_parts[1][i/2].y = __float2half(parts->y[i + 1]);
-        d_parts->temp_parts[2][i/2].x = __float2half(parts->z[i]);
-        d_parts->temp_parts[2][i/2].y = __float2half(parts->z[i + 1]);
-        d_parts->temp_parts[3][i/2].x = __float2half(parts->u[i]);
-        d_parts->temp_parts[3][i/2].y = __float2half(parts->u[i + 1]);
-        d_parts->temp_parts[4][i/2].x = __float2half(parts->v[i]);
-        d_parts->temp_parts[4][i/2].y = __float2half(parts->v[i + 1]);
-        d_parts->temp_parts[5][i/2].x = __float2half(parts->w[i]);
-        d_parts->temp_parts[5][i/2].y = __float2half(parts->w[i + 1]);
-    }
+    cudaMemcpy(d_parts->temp_parts[0], parts->x, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->temp_parts[1], parts->y, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->temp_parts[2], parts->z, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->temp_parts[3], parts->u, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->temp_parts[4], parts->v, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_parts->temp_parts[5], parts->w, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
 
-    cudaMemcpy((d_parts->x), d_parts->temp_parts[0], parts->npmax /2 *sizeof(half2) + 1, cudaMemcpyHostToDevice);
-    cudaMemcpy((d_parts->y), d_parts->temp_parts[1], parts->npmax /2 *sizeof(half2) + 1, cudaMemcpyHostToDevice);
-    cudaMemcpy((d_parts->z), d_parts->temp_parts[2], parts->npmax /2 *sizeof(half2) + 1, cudaMemcpyHostToDevice);
-    cudaMemcpy((d_parts->u), d_parts->temp_parts[3], parts->npmax /2 *sizeof(half2) + 1, cudaMemcpyHostToDevice);
-    cudaMemcpy((d_parts->v), d_parts->temp_parts[4], parts->npmax /2 *sizeof(half2) + 1, cudaMemcpyHostToDevice);
-    cudaMemcpy((d_parts->w), d_parts->temp_parts[5], parts->npmax /2 *sizeof(half2) + 1, cudaMemcpyHostToDevice);
+    int Db = TPB;
+    int Dg = (parts->npmax / 2 + TPB - 1) / TPB;
+    parts_to_fp16_kernel<<<Dg,Db>>>(*d_parts, parts->npmax);
+}
+
+__global__ void parts_to_float_kernel(struct d_particles d_parts, int npmax) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i >= npmax / 2)
+        return;
+    d_parts.temp_parts[0][2 * i]     = __half2float(d_parts.x[i].x);
+    d_parts.temp_parts[0][2 * i + 1] = __half2float(d_parts.x[i].y);
+    d_parts.temp_parts[1][2 * i]     = __half2float(d_parts.y[i].x);
+    d_parts.temp_parts[1][2 * i + 1] = __half2float(d_parts.y[i].y);
+    d_parts.temp_parts[2][2 * i]     = __half2float(d_parts.z[i].x);
+    d_parts.temp_parts[2][2 * i + 1] = __half2float(d_parts.z[i].y);
+    d_parts.temp_parts[3][2 * i]     = __half2float(d_parts.u[i].x);
+    d_parts.temp_parts[3][2 * i + 1] = __half2float(d_parts.u[i].y);
+    d_parts.temp_parts[4][2 * i]     = __half2float(d_parts.v[i].x);
+    d_parts.temp_parts[4][2 * i + 1] = __half2float(d_parts.v[i].y);
+    d_parts.temp_parts[5][2 * i]     = __half2float(d_parts.w[i].x);
+    d_parts.temp_parts[5][2 * i + 1] = __half2float(d_parts.w[i].y);
 }
 
 void parts_to_float(struct particles* parts, struct d_particles *d_parts) {
-    cudaMemcpy(d_parts->temp_parts[0], d_parts->x, parts->npmax/2 * sizeof(half2) + 1, cudaMemcpyDeviceToHost);
-    cudaMemcpy(d_parts->temp_parts[1], d_parts->y, parts->npmax/2 * sizeof(half2) + 1, cudaMemcpyDeviceToHost);
-    cudaMemcpy(d_parts->temp_parts[2], d_parts->z, parts->npmax/2 * sizeof(half2) + 1, cudaMemcpyDeviceToHost);
-    cudaMemcpy(d_parts->temp_parts[3], d_parts->u, parts->npmax/2 * sizeof(half2) + 1, cudaMemcpyDeviceToHost);
-    cudaMemcpy(d_parts->temp_parts[4], d_parts->v, parts->npmax/2 * sizeof(half2) + 1, cudaMemcpyDeviceToHost);
-    cudaMemcpy(d_parts->temp_parts[5], d_parts->w, parts->npmax/2 * sizeof(half2) + 1, cudaMemcpyDeviceToHost);
+    int Db = TPB;
+    int Dg = (parts->npmax / 2 + TPB - 1) / TPB;
+    parts_to_float_kernel<<<Dg,Db>>>(*d_parts, parts->npmax);
 
-
-    for(int i = 0; i < parts->nop; i+=2) {
-        parts->x[i] = (FPpart)__half2float(d_parts->temp_parts[0][i/2].x);
-        parts->x[i + 1] = (FPpart)__half2float(d_parts->temp_parts[0][i/2].y);
-        parts->y[i] = (FPpart)__half2float(d_parts->temp_parts[1][i/2].x);
-        parts->y[i + 1] = (FPpart)__half2float(d_parts->temp_parts[1][i/2].y);
-        parts->z[i] = (FPpart)__half2float(d_parts->temp_parts[2][i/2].x);
-        parts->z[i + 1] = (FPpart)__half2float(d_parts->temp_parts[2][i/2].y);
-        parts->u[i] = (FPpart)__half2float(d_parts->temp_parts[3][i/2].x);
-        parts->u[i + 1] = (FPpart)__half2float(d_parts->temp_parts[3][i/2].y);
-        parts->v[i] = (FPpart)__half2float(d_parts->temp_parts[4][i/2].x);
-        parts->v[i + 1] = (FPpart)__half2float(d_parts->temp_parts[4][i/2].y);
-        parts->w[i] = (FPpart)__half2float(d_parts->temp_parts[5][i/2].x);
-        parts->w[i + 1] = (FPpart)__half2float(d_parts->temp_parts[5][i/2].y);
-    }
+    cudaMemcpy(parts->x, d_parts->temp_parts[0], parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->y, d_parts->temp_parts[1], parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->z, d_parts->temp_parts[2], parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->u, d_parts->temp_parts[3], parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->v, d_parts->temp_parts[4], parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parts->w, d_parts->temp_parts[5], parts->npmax * sizeof(float), cudaMemcpyDeviceToHost);
 
     cudaFree(d_parts->x);
     cudaFree(d_parts->y);
@@ -817,6 +832,6 @@ void parts_to_float(struct particles* parts, struct d_particles *d_parts) {
     cudaFree(d_parts->w);
 
     for(int i = 0; i < 6; i++) {
-        free(d_parts->temp_parts[i]);
+        cudaFree(d_parts->temp_parts[i]);
     }
 }

@@ -53,7 +53,7 @@ struct particles {
 struct d_particles {
     half2* x; half2* y; half2* z;
     half2* u; half2* v; half2* w;
-    half2 * temp_parts[6];
+    float * temp_parts[6];
 };
 
 /** allocate particle arrays */
