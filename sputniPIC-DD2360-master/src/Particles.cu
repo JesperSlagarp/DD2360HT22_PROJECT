@@ -6,6 +6,7 @@
 #include <cuda_fp16.h>
 #define TPB 128
 
+// We compile twice, once with float as a datatype and once with half2. The #ifdefs ensure only the respective code is compiled.
 #ifdef FLOAT
 __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, FPpart qom, struct grid grd, struct parameters param,
                   struct d_particles d_parts, struct d_EMfield d_fld, struct d_grid d_grd)
@@ -264,8 +265,6 @@ __global__ void mover_kernel(int n_sub_cycles, int NiterMover, long nop, half qo
             vt= __hadd2(d_parts.v[i], __hmul2_rn(qomdt2, Eyl));
             wt= __hadd2(d_parts.w[i], __hmul2_rn(qomdt2, Ezl));
             udotb = __hadd2(__hadd2(__hmul2_rn(ut, Bxl), __hmul2_rn(vt, Byl)), __hmul2_rn(wt, Bzl));
-
-            //if(i == 1) { printf("AFTER position equation\n");}
             
             // solve the velocity equation
             uptilde = __hmul2_rn(__hadd2(ut, __hmul2_rn(qomdt2, __hadd2(__hmul2_rn(vt, Bzl), __hadd2(__hmul2_rn(__hneg2(wt), Byl), __hmul2_rn(qomdt2, __hmul2_rn(udotb, Bxl)))))), denom);
@@ -433,11 +432,8 @@ int mover_PC_gpu(struct particles* part, struct EMfield* field,
     int Dg = (part->nop / 2 + TPB - 1) / TPB;
     mover_kernel<<<Dg, Db>>>(part->n_sub_cycles, part->NiterMover, part->nop, __float2half(part->qom), *grd, *param, *d_parts, *d_fld, *d_grd);
 #endif
-    // std::cout << "Number of particles: " << part->nop << std::endl;
     double endTime = cpuSecond() - startTime;
-    kernelTotTime += endTime;
-    //I FEAR NO MAN, BUT THAT THING, SEGMENTATION FAULT(core dumped), IT SCARES ME. 
-    //std::cout << "End time: " << endTime << "\n\n" << std::endl;
+    kernelTotTime += endTime; //Sums up the total runtime of the kernel
     cudaDeviceSynchronize();
 
     return(0); // exit succcesfully
@@ -674,8 +670,6 @@ int mover_PC_cpu(struct particles* part, struct EMfield* field, struct grid* grd
     return(0); // exit succcesfully
 } // end of the mover
 
-
-
 /** Interpolation Particle --> Grid: This is for species */
 void interpP2G(struct particles* part, struct interpDensSpecies* ids, struct grid* grd)
 {
@@ -910,6 +904,8 @@ void free_d_field(struct d_EMfield *d_fld) {
     cudaFree(d_fld->Bzn_flat);
 }
 
+// Particles conversion functions for both float and half2
+// The functions are named after their direction of conversion.
 #ifdef FLOAT
 void parts_to_fp16(struct particles* parts, struct d_particles *d_parts) {
 
@@ -933,11 +929,11 @@ void parts_to_fp16(struct particles* parts, struct d_particles *d_parts) {
     cudaMemcpy(d_parts->w, parts->w, parts->npmax *sizeof(float), cudaMemcpyHostToDevice);
 }
 #else
+// temp_parts is a copy of the original particles but stored on the GPU. It contains unconverted floats.
 __global__ void parts_to_fp16_kernel(struct d_particles d_parts, int npmax) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i >= npmax / 2)
         return;
-    // printf("Test2 %f\n", __half2float(d_parts.x[0].x));
     d_parts.x[0].x = __float2half(d_parts.temp_parts[0][2 * i]);
     d_parts.x[i].y = __float2half(d_parts.temp_parts[0][2 * i + 1]);
     d_parts.y[i].x = __float2half(d_parts.temp_parts[1][2 * i]);
