@@ -50,10 +50,19 @@ struct particles {
     FPinterp* q;
 };
 
+
+#ifdef FLOAT
+struct d_particles {
+    float* x; float* y; float* z;
+    float* u; float* v; float* w;
+};
+#else
 struct d_particles {
     half2* x; half2* y; half2* z;
     half2* u; half2* v; half2* w;
+    float * temp_parts[6];
 };
+#endif
 
 /** allocate particle arrays */
 void particle_allocate(struct parameters*, struct particles*, int);
@@ -67,6 +76,14 @@ int mover_PC(struct particles*, struct EMfield*, struct grid*, struct parameters
 /** Interpolation Particle --> Grid: This is for species */
 void interpP2G(struct particles*, struct interpDensSpecies*, struct grid*);
 
-int mover_PC_gpu(struct particles*, struct EMfield*, struct grid*, struct parameters*);
+int mover_PC_gpu(struct particles* part, struct EMfield* field, struct grid* grd, struct parameters* param, struct d_particles* d_parts, struct d_grid *d_grd, struct d_EMfield * d_fld, double& kernelTotTime);
 
+void grid_to_fp16(struct grid*, struct d_grid*);
+void free_d_grid(struct d_grid* d_grd);
+
+void field_to_fp16(struct grid* grd, struct EMfield *field, struct d_EMfield *d_fld);
+void free_d_field(struct d_EMfield*);
+
+void parts_to_fp16(struct particles* parts, struct d_particles *d_parts);
+void parts_to_float(struct particles* parts, struct d_particles *d_parts);
 #endif

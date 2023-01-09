@@ -42,7 +42,7 @@ int main(int argc, char **argv){
     
     // Timing variables
     double iStart = cpuSecond();
-    double iMover, iInterp, eMover = 0.0, eInterp= 0.0;
+    double iMover, iInterp, eMover = 0.0, eInterp= 0.0, iAlloc, eAlloc, iDealloc, eDealloc, kernelTotTime = 0.0;
     
     // Set-up the grid information
     grid grd;
@@ -74,7 +74,9 @@ int main(int argc, char **argv){
     // Initialization
     initGEM(&param,&grd,&field,&field_aux,part,ids);
 
-
+    // Grid GPU Allocation
+    
+    // Field GPU Allocation
     
     
     // **********************************************************//
@@ -91,13 +93,34 @@ int main(int argc, char **argv){
         setZeroDensities(&idn,ids,&grd,param.ns);
         
         
-        
+        // Particle GPU Allocation
+        struct d_particles d_parts[param.ns]; 
+        for (int is=0; is < param.ns; is++) {
+        }
+
         // implicit mover
+        for (int is=0; is < param.ns; is++) {
+            
+        iAlloc = cpuSecond(); // start timer for particle conversion to fp16
+            d_grid d_grd;
+            grid_to_fp16(&grd, &d_grd);
+            d_EMfield d_fld;
+            field_to_fp16(&grd, &field, &d_fld);
+            parts_to_fp16(&part[is], &d_parts[is]);
+        eAlloc += cpuSecond() - iAlloc; // end timer for particle conversion to fp16
+
         iMover = cpuSecond(); // start timer for mover
-        for (int is=0; is < param.ns; is++)
-            mover_PC_gpu(&part[is],&field,&grd,&param);
-        eMover += (cpuSecond() - iMover); // stop timer for mover
-        
+            mover_PC_gpu(&part[is], &field, &grd, &param, &d_parts[is], &d_grd, &d_fld, kernelTotTime);
+         eMover += (cpuSecond() - iMover); // stop timer for mover
+        iDealloc = cpuSecond(); // start timer for particle conversion back to fp32
+            parts_to_float(&part[is], &d_parts[is]);
+            free_d_grid(&d_grd);
+            free_d_field(&d_fld);
+        eDealloc +=  cpuSecond() - iDealloc; // end timer for particle conversion back to fp32
+        }
+
+        for (int is=0; is < param.ns; is++) {
+        }
         
         
         
@@ -132,6 +155,7 @@ int main(int argc, char **argv){
     // deallocate field
     grid_deallocate(&grd);
     field_deallocate(&grd,&field);
+
     // interp
     interp_dens_net_deallocate(&grd,&idn);
     
@@ -149,8 +173,11 @@ int main(int argc, char **argv){
     std::cout << std::endl;
     std::cout << "**************************************" << std::endl;
     std::cout << "   Tot. Simulation Time (s) = " << iElaps << std::endl;
+    std::cout << "   Alloc Time / Cycle   (s) = " << eAlloc/param.ncycles << std::endl;
     std::cout << "   Mover Time / Cycle   (s) = " << eMover/param.ncycles << std::endl;
+    std::cout << "   Dealloc Time / Cycle (s) = " << eDealloc/param.ncycles << std::endl;
     std::cout << "   Interp. Time / Cycle (s) = " << eInterp/param.ncycles  << std::endl;
+    std::cout << "   Kernel total Time / Cycle (s) = " << kernelTotTime/param.ncycles  << std::endl;
     std::cout << "**************************************" << std::endl;
     
     // exit
